@@ -12,8 +12,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "studio": "node server.mjs",
-    "studio:check": "node --check server.mjs && node --check app.js"
+    "studio": "node legacy-local/server.mjs",
+    "studio:check": "node --check legacy-local/server.mjs && node --check legacy-local/app.js"
   },
   "overrides": {
     "rolldown": "1.2.1",

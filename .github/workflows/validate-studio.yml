@@ -20,8 +20,8 @@ jobs:
       - name: Validar sintaxe do estúdio independente
         run: |
           node --check public/studio/studio.js
-          node --check app.js
-          node --check server.mjs
+          node --check legacy-local/app.js
+          node --check legacy-local/server.mjs
           node --test tests/manual-studio.test.mjs
       - name: Instalar Bun
         uses: oven-sh/setup-bun@v2
@@ -31,6 +31,8 @@ jobs:
         run: bun run test
       - name: Compilar aplicativo principal
         run: bun run build
+      - name: Verificar saída de produção
+        run: test -d .output/public && test -f .output/public/studio/index.html
       - name: Disponibilizar estúdio manual
         if: always()
         uses: actions/upload-artifact@v4
