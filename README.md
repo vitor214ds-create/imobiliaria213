@@ -33,3 +33,10 @@ Na aba Conexões, configure Gemini (chave em https://aistudio.google.com/apikey)
 Envie JPG/PNG de até 10 MB, escolha cômodo e estilo, gere a imagem, compare os frames e gere o vídeo. O botão automático executa as duas etapas, após confirmação de possíveis custos. O giro de 90 graus é opcional e deve ser revertido em editor externo. Baixe os arquivos antes de fechar; a mídia local é temporária. Informe que a decoração/construção é simulação virtual.
 
 Chaves não são versionadas nem gravadas pelo estúdio. Também podem ser fornecidas em variáveis de ambiente GEMINI_API_KEY, GOOGLE_PROJECT, GOOGLE_ACCESS_TOKEN, VSA_API_KEY e KLING_API_KEY. Não use senhas de contas. As imagens são enviadas ao provedor escolhido. Não há garantia de gratuidade nem de preservação perfeita da arquitetura. Integrações precisam de validação com credenciais reais; não há persistência de projetos, login multiusuário ou edição final de áudio. Execute `npm run studio:check` para conferir sintaxe.
+
+
+## Contingência sem Lovable
+
+A interface manual independente está em `public/studio/`. Abra `public/studio/index.html` localmente no navegador ou publique somente essa pasta em hospedagem estática. No Lovable, após build/publicação, o caminho esperado é `/studio/index.html`. Ela funciona sem login, API ou servidor; não realiza geração por IA automaticamente. Arquivos ficam no navegador, temporariamente. Não publique arquivos .env nem o servidor local.
+
+A versão em nuvem usa os Secrets GEMINI_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, VSA_API_KEY, KLING_ACCESS_KEY, KLING_SECRET_KEY e STUDIO_OWNER_USER_ID. Configure no ambiente de hospedagem, não no GitHub. As credenciais locais descritas acima são exclusivas do servidor legado.
