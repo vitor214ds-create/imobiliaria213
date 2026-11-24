@@ -1,0 +1,11 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import vm from "node:vm";
+const root=new URL("../public/studio/",import.meta.url);
+const html=await readFile(new URL("index.html",root),"utf8");
+const js=await readFile(new URL("studio.js",root),"utf8");
+test("HTML carrega scripts locais e não depende de framework",()=>{assert.match(html,/src="\.\/studio\.js"/);assert.match(html,/href="\.\/studio\.css"/);assert.doesNotMatch(html,/<script[^>]+src="https?:/);new vm.Script(js);});
+test("todos os elementos estáticos acessados existem",()=>{const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);assert.equal(new Set(ids).size,ids.length);for(const m of js.matchAll(/\$\("([^"]+)"\)/g))assert.ok(ids.includes(m[1]),"ID ausente: "+m[1]);});
+test("modo manual não envia arquivos nem solicita segredos",()=>{assert.doesNotMatch(js,/\bfetch\s*\(|XMLHttpRequest|localStorage|API_KEY|SECRET_KEY/);assert.match(html,/não gera imagens ou vídeos por IA sozinha/);});
+test("inicialização sem servidor",()=>{const elements=new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(m=>[m[1],{value:"",style:{},replaceChildren(...opts){this.value=opts[0]?.value||"";},removeAttribute(){}}]));vm.runInNewContext(js,{document:{getElementById:id=>elements.get(id)},Option:class{constructor(label,value){this.label=label;this.value=value;}}});assert.match(elements.get("sp").value,/Preserve the exact architecture/);assert.match(elements.get("vp").value,/Furniture gradually rises/);assert.equal(elements.get("rotate").disabled,true);assert.equal(elements.get("compare").hidden,true);});
