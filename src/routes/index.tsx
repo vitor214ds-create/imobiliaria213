@@ -1,23 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-// The home route ships no og:image, so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Imobiliária Studio IA — Virtual staging e vídeo" },
+      { name: "description", content: "Decore imóveis vazios com IA e gere vídeos de antes e depois." },
+      { property: "og:title", content: "Imobiliária Studio IA" },
+      { property: "og:description", content: "Decore imóveis vazios com IA e gere vídeos de antes e depois." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
 function Index() {
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
+    <main className="mx-auto max-w-3xl px-6 py-20">
+      <p className="eyebrow">Estúdio criativo / virtual staging</p>
+      <h1 className="mt-3 font-display text-4xl">Transforme imóveis em experiências.</h1>
+      <div className="panel mt-8 text-sm text-muted-foreground">
+        Em construção: a base segura do estúdio já está pronta, mas a tela de criação ainda não foi concluída.
+      </div>
+    </main>
   );
 }
