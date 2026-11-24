@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "studio": "node server.mjs",
+    "studio:check": "node --check server.mjs && node --check app.js"
   },
   "overrides": {
     "rolldown": "1.2.1",
