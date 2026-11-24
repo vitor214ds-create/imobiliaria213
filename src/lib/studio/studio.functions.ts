@@ -5,7 +5,7 @@ import { BUCKET, MAX_IMAGE_BYTES, ROOMS, STYLES } from "./constants";
 import { bytesToBase64 } from "./encoding";
 import { imageSize, ratioMatches, sameAspect, sniffImageMime, validatePrompt, validateStageOptions, validateVideoOptions } from "./validation";
 import {
-  ProviderError, downloadProviderMedia, geminiCheck, geminiStage, klingCheck, klingJwt, klingPoll, klingStart,
+  cloudAuth, ProviderError, downloadProviderMedia, geminiCheck, geminiStage, klingCheck, klingJwt, klingPoll, klingStart,
   veoPoll, veoStart, vsaCheck, vsaPoll, vsaStart, type InlineImage, type PollResult,
 } from "./providers.server";
 
@@ -38,6 +38,10 @@ async function loadImage(ctx: Ctx, path: string | null | undefined, label: strin
   return { inline: { mimeType: mime, data: bytesToBase64(bytes) } as InlineImage, size };
 }
 
+async function ownerOnly(ctx: Ctx) {
+ const allowed = need("STUDIO_OWNER_USER_ID","ID do proprietário");
+ if(ctx.userId!==allowed) throw new Error("Geração automática disponível apenas ao proprietário autorizado.");
+}
 async function loadProject(ctx: Ctx, id: string) {
   const { data, error } = await ctx.supabase.from("studio_projects").select("*").eq("id", id).maybeSingle();
   if (error || !data) throw new Error("Projeto não encontrado.");
@@ -78,19 +82,21 @@ const publicJob = (j: any) => ({
 /* ---------- Connections ---------- */
 export const connectionStatus = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
-  .handler(async () => ({
+  .handler(async ({context}) => { await ownerOnly(context as unknown as Ctx); return ({
     gemini: !!env("GEMINI_API_KEY"),
-    veo: !!env("GEMINI_API_KEY"),
+    veo: !!env("GOOGLE_SERVICE_ACCOUNT_JSON"),
     virtual: !!env("VSA_API_KEY"),
     kling: !!env("KLING_ACCESS_KEY") && !!env("KLING_SECRET_KEY"),
-  }));
+  }); });
 
 export const checkConnection = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ provider: z.enum(["gemini", "veo", "virtual", "kling"]) }))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    await ownerOnly(context as unknown as Ctx);
     try {
-      if (data.provider === "gemini" || data.provider === "veo") {
+      if (data.provider === "veo") { await cloudAuth(need("GOOGLE_SERVICE_ACCOUNT_JSON","Google Cloud")); return {ok:true,message:"Autenticação Google Cloud válida; confirme permissões e faturamento."}; }
+      if (data.provider === "gemini") {
         const key = need("GEMINI_API_KEY", "Gemini");
         await geminiCheck(key);
         return { ok: true, message: "Chave válida no Gemini API. A geração depende de faturamento, cotas e acesso ao modelo." };
@@ -117,6 +123,7 @@ export const startStage = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as Ctx;
+    await ownerOnly(ctx);
     const err = validateStageOptions(data);
     if (err) throw new Error(err);
     const prompt = validatePrompt(data.prompt);
@@ -134,8 +141,8 @@ export const startStage = createServerFn({ method: "POST" })
         const bytes = Uint8Array.from(atob(out.data), (c) => c.charCodeAt(0));
         const mime = sniffImageMime(bytes);
         if (!mime) throw new ProviderError("O Gemini retornou um formato de imagem não suportado.");
-        await storeResult(ctx, job, bytes, mime);
-        return publicJob({ ...job, status: "done" });
+        const path = await storeResult(ctx, job, bytes, mime);
+        return publicJob({ ...job, status: "done", result_path:path });
       }
       const { data: signed, error } = await ctx.supabase.storage.from(BUCKET).createSignedUrl(project.first_path, 900);
       if (error || !signed?.signedUrl) throw new Error("Não foi possível gerar link temporário da foto.");
@@ -160,6 +167,7 @@ export const startVideo = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as Ctx;
+    await ownerOnly(ctx);
     const err = validateVideoOptions(data);
     if (err) throw new Error(err);
     const prompt = validatePrompt(data.prompt);
@@ -170,7 +178,7 @@ export const startVideo = createServerFn({ method: "POST" })
     if (data.provider === "veo" && !ratioMatches(a.size, data.ratio))
       throw new Error(`As imagens não combinam com o formato ${data.ratio}. Gire os frames ou troque o formato.`);
     const [first, last] = data.effect === "reverse" ? [b.inline, a.inline] : [a.inline, b.inline];
-    const key = data.provider === "veo" ? need("GEMINI_API_KEY", "Gemini (Veo)") : null;
+    const key = data.provider === "veo" ? need("GOOGLE_SERVICE_ACCOUNT_JSON", "Google Cloud Veo") : null;
     const token = data.provider === "kling" ? await klingToken() : null;
     const { job, existing } = await createJob(ctx, {
       project_id: project.id, kind: "video", provider: data.provider, model: data.model,
@@ -197,6 +205,7 @@ export const pollJob = createServerFn({ method: "POST" })
   .inputValidator(z.object({ jobId: z.string().uuid() }))
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as Ctx;
+    await ownerOnly(ctx);
     const { data: job } = await ctx.supabase.from("studio_jobs").select("*").eq("id", data.jobId).maybeSingle();
     if (!job) throw new Error("Tarefa não encontrada.");
     if (job.status !== "running" && job.status !== "queued") return publicJob(job);
@@ -212,9 +221,9 @@ export const pollJob = createServerFn({ method: "POST" })
       let dlHeaders: Record<string, string> | undefined;
       if (job.provider === "virtual") r = await vsaPoll({ key: need("VSA_API_KEY", "Virtual Staging AI"), id: job.provider_task_id });
       else if (job.provider === "veo") {
-        const key = need("GEMINI_API_KEY", "Gemini (Veo)");
+        const key = need("GOOGLE_SERVICE_ACCOUNT_JSON", "Google Cloud Veo");
         r = await veoPoll({ key, operation: job.provider_task_id });
-        dlHeaders = { "x-goog-api-key": key };
+
       } else if (job.provider === "kling") r = await klingPoll({ token: await klingToken(), id: job.provider_task_id });
       else return publicJob(job);
       if (r.state === "running") return publicJob(job);
@@ -223,8 +232,8 @@ export const pollJob = createServerFn({ method: "POST" })
         return publicJob({ ...job, status: "error", error: r.message });
       }
       const isVideo = job.kind === "video";
-      const { bytes, mime } = await downloadProviderMedia(r.url, { headers: dlHeaders, max: isVideo ? undefined : 15 * 1024 * 1024 });
-      const finalMime = isVideo ? "video/mp4" : sniffImageMime(bytes);
+      const { bytes, mime } = "bytes" in r ? {bytes:r.bytes,mime:"video/mp4"} : await downloadProviderMedia(r.url, { headers: dlHeaders, max: isVideo ? undefined : 10 * 1024 * 1024 });
+      const finalMime = isVideo ? (bytes.length>12 && String.fromCharCode(...bytes.slice(4,8))==="ftyp" ? "video/mp4" : null) : sniffImageMime(bytes);
       if (!finalMime) throw new ProviderError(`Formato de resultado inesperado (${mime || "desconhecido"}).`);
       const path = await storeResult(ctx, job, bytes, finalMime);
       return publicJob({ ...job, status: "done", result_path: path });
@@ -241,6 +250,7 @@ export const cancelJob = createServerFn({ method: "POST" })
   .inputValidator(z.object({ jobId: z.string().uuid() }))
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as Ctx;
+    await ownerOnly(ctx);
     await ctx.supabase.from("studio_jobs").update({ status: "error", error: "Acompanhamento cancelado pelo usuário. A tarefa pode continuar (e ser cobrada) no provedor." })
       .eq("id", data.jobId).in("status", ["queued", "running"]);
     return { ok: true };
