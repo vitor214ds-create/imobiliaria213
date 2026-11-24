@@ -260,8 +260,7 @@ export const pollJob = createServerFn({ method: "POST" })
 export const cancelJob = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator(z.object({ jobId: z.string().uuid() }))
-  .handler(async ({ data, context }) => {
-    const ctx = context as unknown as Ctx;
-    await ownerOnly(ctx);
+  .handler(async ({ context }) => {
+    await ownerOnly(context as unknown as Ctx);
     throw Error("Não é possível cancelar com segurança no provedor. Consulte a tarefa até concluir.");
   });
