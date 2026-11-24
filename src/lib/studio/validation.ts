@@ -22,7 +22,7 @@ export function validateImageFile(file: { type: string; size: number }): string 
 
 /** Detects real MIME from magic bytes (never trusts the file extension). */
 export function sniffImageMime(bytes: Uint8Array): "image/png" | "image/jpeg" | null {
-  if (bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes.length >= 24 && [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a].every((b,i)=>bytes[i]===b) && String.fromCharCode(...bytes.slice(12,16))==="IHDR") return "image/png";
   if (bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   return null;
 }
@@ -31,15 +31,19 @@ export function sniffImageMime(bytes: Uint8Array): "image/png" | "image/jpeg" | 
 export function imageSize(bytes: Uint8Array): { width: number; height: number } | null {
   const mime = sniffImageMime(bytes);
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (mime === "image/png" && bytes.length >= 24) return { width: dv.getUint32(16), height: dv.getUint32(20) };
+  const safeSize = (width:number,height:number) => width>0 && height>0 && width<=16384 && height<=16384 && width*height<=50_000_000 ? {width,height}:null;
+  if (mime === "image/png" && bytes.length >= 24) return safeSize(dv.getUint32(16),dv.getUint32(20));
   if (mime === "image/jpeg") {
     let i = 2;
     while (i + 9 < bytes.length) {
       if (bytes[i] !== 0xff) { i++; continue; }
       const marker = bytes[i + 1]!;
+      if(marker===0xd9 || marker===0xda) break;
+      if(marker===0xff || marker===0x01 || (marker>=0xd0 && marker<=0xd8)){i+=marker===0xff?1:2;continue;}
       const len = dv.getUint16(i + 2);
+      if(len<2 || i+2+len>bytes.length) return null;
       if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-        return { height: dv.getUint16(i + 5), width: dv.getUint16(i + 7) };
+        return len>=8?safeSize(dv.getUint16(i + 7),dv.getUint16(i + 5)):null;
       }
       i += 2 + len;
     }
@@ -53,7 +57,8 @@ export function sameAspect(a: { width: number; height: number }, b: { width: num
 
 /** Orientation of an image vs. the requested video ratio. */
 export function ratioMatches(size: { width: number; height: number }, ratio: string) {
-  return ratio === "9:16" ? size.height >= size.width : size.width >= size.height;
+  const target=ratio==="9:16"?9/16:ratio==="16:9"?16/9:0;
+  return target>0 && size.height>0 && Math.abs(size.width/size.height-target)/target<=0.025;
 }
 
 export type VideoOptions = {
