@@ -1,0 +1,40 @@
+name: Validar Imobiliaria Studio
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  studio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validar sintaxe do estúdio independente
+        run: |
+          node --check public/studio/studio.js
+          node --check app.js
+          node --check server.mjs
+          node --test tests/manual-studio.test.mjs
+      - name: Instalar Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Instalar dependências
+        run: bun install --frozen-lockfile
+      - name: Testes
+        run: bun run test
+      - name: Compilar aplicativo principal
+        run: bun run build
+      - name: Disponibilizar estúdio manual
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: imobiliaria-studio-manual
+          path: public/studio/
+          if-no-files-found: error
