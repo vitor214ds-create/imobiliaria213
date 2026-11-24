@@ -29,7 +29,7 @@ async function call(f: Fetch, url: string, init: RequestInit & { json?: unknown 
   const d = (await r.json().catch(() => ({}))) as Record<string, any>;
   const klingCode = typeof d["code"] === "number" && d["code"] !== 0;
   if (!r.ok || klingCode) {
-    const msg = String(d["error"]?.message ?? d["message"] ?? d["detail"] ?? "verifique credenciais, saldo e modelo").slice(0, 300);
+    const msg = "verifique credenciais, saldo, cotas e modelo";
     throw new ProviderError(`Provedor retornou ${r.status}: ${msg}`);
   }
   return d;
@@ -60,46 +60,51 @@ export async function geminiStage(
   return { mimeType: img.mimeType ?? img.mime_type ?? "image/png", data: img.data };
 }
 
-/* ---------------- Veo 3.1 via Gemini API (first + last frame) ---------------- */
-export async function veoStart(
-  p: { key: string; model: string; prompt: string; first: InlineImage; last: InlineImage; aspectRatio: string; resolution: string; durationSeconds: number },
-  f: Fetch = fetch,
-): Promise<string> {
-  const d = await call(f, `${GEMINI_BASE}/models/${encodeURIComponent(p.model)}:predictLongRunning`, {
-    method: "POST",
-    headers: { "x-goog-api-key": p.key },
-    json: {
-      instances: [{
-        prompt: p.prompt,
-        image: { bytesBase64Encoded: p.first.data, mimeType: p.first.mimeType },
-        lastFrame: { bytesBase64Encoded: p.last.data, mimeType: p.last.mimeType },
-      }],
-      parameters: {
-        aspectRatio: p.aspectRatio,
-        resolution: p.resolution,
-        durationSeconds: p.durationSeconds,
-        negativePrompt: NEGATIVE_PROMPT,
-        personGeneration: "allow_adult",
-      },
-    },
-  });
-  const name = d["name"];
-  if (typeof name !== "string" || !/^models\/[\w.-]+\/operations\/[\w-]+$/.test(name)) throw new ProviderError("O Veo não retornou uma operação válida.");
+/* ---------------- Veo 3.1: Google Cloud stable ---------------- */
+export type PollResult = { state: "running" } | { state: "done"; url: string } | { state: "done"; bytes: Uint8Array } | { state: "error"; message: string };
+export async function cloudAuth(raw: string, f: Fetch = fetch) {
+  let account: { project_id?: string; client_email?: string; private_key?: string };
+  try { account = JSON.parse(raw); } catch { throw new ProviderError("GOOGLE_SERVICE_ACCOUNT_JSON inválido."); }
+  const { project_id: project, client_email: email, private_key: pem } = account;
+  if (!project || !/^[a-z][a-z0-9-]{4,62}$/.test(project) || !email || !pem) throw new ProviderError("Conta de serviço Google incompleta.");
+  const now = Math.floor(Date.now()/1000);
+  const header = base64UrlString(JSON.stringify({alg:"RS256",typ:"JWT"}));
+  const claim = base64UrlString(JSON.stringify({iss:email,scope:"https://www.googleapis.com/auth/cloud-platform",aud:"https://oauth2.googleapis.com/token",iat:now,exp:now+3600}));
+  const der = base64ToBytes(pem.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s/g,""));
+  const key = await crypto.subtle.importKey("pkcs8", der as Uint8Array<ArrayBuffer>, {name:"RSASSA-PKCS1-v1_5",hash:"SHA-256"},false,["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key,new TextEncoder().encode(header+"."+claim)));
+  const assertion = header+"."+claim+"."+base64Url(sig);
+  const r = await f("https://oauth2.googleapis.com/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion}),redirect:"error",signal:AbortSignal.timeout(20000)});
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok || typeof d.access_token !== "string") throw new ProviderError("Google Cloud não aceitou a conta de serviço.");
+  return {project, token:d.access_token as string};
+}
+function cloudModel(project:string,model:string) {
+  if(!/^[a-z][a-z0-9-]{4,62}$/.test(project) || !["veo-3.1-fast-generate-001","veo-3.1-generate-001"].includes(model)) throw new ProviderError("Modelo ou projeto inválido.");
+  return "projects/"+project+"/locations/us-central1/publishers/google/models/"+model;
+}
+const CLOUD = "https://us-central1-aiplatform.googleapis.com/v1/";
+export async function veoStart(p:{key:string;model:string;prompt:string;first:InlineImage;last:InlineImage;aspectRatio:string;resolution:string;durationSeconds:number}, f:Fetch=fetch) {
+  const auth=await cloudAuth(p.key,f), model=cloudModel(auth.project,p.model);
+  const d=await call(f,CLOUD+model+":predictLongRunning",{method:"POST",headers:{Authorization:"Bearer "+auth.token},json:{
+    instances:[{prompt:p.prompt,image:{bytesBase64Encoded:p.first.data,mimeType:p.first.mimeType},lastFrame:{bytesBase64Encoded:p.last.data,mimeType:p.last.mimeType}}],
+    parameters:{aspectRatio:p.aspectRatio,resolution:p.resolution,durationSeconds:p.durationSeconds,sampleCount:1,generateAudio:false,negativePrompt:NEGATIVE_PROMPT,personGeneration:"disallow"}
+  }});
+  const name=d["name"];if(typeof name!=="string"||!name.startsWith(model+"/operations/")||!/^[\w-]+$/.test(name.slice(model.length+12)))throw new ProviderError("Operação Veo inválida.");
   return name;
 }
-export type PollResult = { state: "running" } | { state: "done"; url: string } | { state: "error"; message: string };
-export async function veoPoll(p: { key: string; operation: string }, f: Fetch = fetch): Promise<PollResult> {
-  if (!/^models\/[\w.-]+\/operations\/[\w-]+$/.test(p.operation)) throw new ProviderError("Operação inválida.");
-  const d = await call(f, `${GEMINI_BASE}/${p.operation}`, { headers: { "x-goog-api-key": p.key } });
-  if (d["error"]) return { state: "error", message: String(d["error"].message ?? "O Veo falhou.").slice(0, 300) };
-  if (!d["done"]) return { state: "running" };
-  const resp = d["response"]?.generateVideoResponse;
-  const uri = resp?.generatedSamples?.[0]?.video?.uri;
-  if (!uri) {
-    const filtered = resp?.raiMediaFilteredReasons?.[0];
-    return { state: "error", message: filtered ? `Vídeo bloqueado pelo filtro do provedor: ${String(filtered).slice(0, 200)}` : "O Veo concluiu sem vídeo." };
-  }
-  return { state: "done", url: uri };
+export async function veoPoll(p:{key:string;operation:string},f:Fetch=fetch):Promise<PollResult>{
+  const auth=await cloudAuth(p.key,f);
+  const match=p.operation.match(/^projects\/([^/]+)\/locations\/us-central1\/publishers\/google\/models\/([^/]+)\/operations\/([\w-]+)$/);
+  if(!match||match[1]!==auth.project||!match[2])throw new ProviderError("Operação Veo inválida.");
+  const model=cloudModel(auth.project,match[2]);
+  const d=await call(f,CLOUD+model+":fetchPredictOperation",{method:"POST",headers:{Authorization:"Bearer "+auth.token},json:{operationName:p.operation}});
+  if(d["error"])return {state:"error",message:"O Google Cloud informou falha na geração."};
+  if(!d["done"])return {state:"running"};
+  const v=d["response"]?.videos?.[0];
+  if(typeof v?.bytesBase64Encoded!=="string")return {state:"error",message:"O Veo concluiu sem vídeo inline. Verifique filtros e limites."};
+  if(v.bytesBase64Encoded.length>MAX_VIDEO_BYTES*1.4)throw new ProviderError("Vídeo acima do limite.");
+  return {state:"done",bytes:base64ToBytes(v.bytesBase64Encoded)};
 }
 
 /* ---------------- Virtual Staging AI v2 ---------------- */
