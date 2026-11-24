@@ -39,7 +39,7 @@ export const IMAGE_PROVIDERS = [
   { value: "virtual", label: "Virtual Staging AI" },
 ] as const;
 export const VIDEO_PROVIDERS = [
-  { value: "veo", label: "Google Veo 3.1 (Gemini API)" },
+  { value: "veo", label: "Google Veo 3.1 (Google Cloud)" },
   { value: "kling", label: "Kling AI" },
 ] as const;
 export type ImageProvider = (typeof IMAGE_PROVIDERS)[number]["value"];
@@ -48,9 +48,9 @@ export type VideoProvider = (typeof VIDEO_PROVIDERS)[number]["value"];
 export const GEMINI_IMAGE_MODELS = [
   "gemini-2.5-flash-image",
   "gemini-3-pro-image-preview",
-  "gemini-3.1-flash-image-preview",
+  "gemini-3.1-flash-image",
 ] as const;
-export const VEO_MODELS = ["veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"] as const;
+export const VEO_MODELS = ["veo-3.1-fast-generate-001", "veo-3.1-generate-001"] as const;
 export const KLING_MODELS = ["kling-v2-5-turbo", "kling-v2-1", "kling-v1-6"] as const;
 
 export const RATIOS = ["9:16", "16:9"] as const;
@@ -71,7 +71,7 @@ export const BUCKET = "studio-media";
 
 export const OFFICIAL_LINKS = {
   geminiKey: "https://aistudio.google.com/apikey",
-  geminiDocs: "https://ai.google.dev/gemini-api/docs/video",
+  geminiDocs: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/generate-videos-from-first-and-last-frames",
   flow: "https://labs.google/fx/tools/flow",
   vsa: "https://virtualstagingai.app/",
   vsaDocs: "https://docs.virtualstagingai.app/v2-api/endpoints",
