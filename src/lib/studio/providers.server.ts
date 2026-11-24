@@ -196,8 +196,10 @@ export async function downloadProviderMedia(rawUrl: string, opts: { headers?: Re
   const len = Number(r.headers.get("content-length") ?? 0);
   const max = opts.max ?? MAX_VIDEO_BYTES;
   if (len > max) throw new ProviderError("Arquivo acima do limite.");
-  const bytes = new Uint8Array(await r.arrayBuffer());
-  if (bytes.length > max) throw new ProviderError("Arquivo acima do limite.");
+  if (!r.body) throw new ProviderError("O provedor não retornou mídia.");
+  const reader=r.body.getReader(), chunks:Uint8Array[]=[];let total=0;
+  try {while(true){const part=await reader.read();if(part.done)break;total+=part.value.length;if(total>max){await reader.cancel();throw new ProviderError("Arquivo acima do limite.");}chunks.push(part.value);}} finally {reader.releaseLock();}
+  const bytes=new Uint8Array(total);let offset=0;for(const part of chunks){bytes.set(part,offset);offset+=part.length;}
   return { bytes, mime: (r.headers.get("content-type") ?? "").split(";")[0] ?? "" };
 }
 
