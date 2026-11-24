@@ -40,3 +40,8 @@ Chaves não são versionadas nem gravadas pelo estúdio. Também podem ser forne
 A interface manual independente está em `public/studio/`. Abra `public/studio/index.html` localmente no navegador ou publique somente essa pasta em hospedagem estática. No Lovable, após build/publicação, o caminho esperado é `/studio/index.html`. Ela funciona sem login, API ou servidor; não realiza geração por IA automaticamente. Arquivos ficam no navegador, temporariamente. Não publique arquivos .env nem o servidor local.
 
 A versão em nuvem usa os Secrets GEMINI_API_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, VSA_API_KEY, KLING_ACCESS_KEY, KLING_SECRET_KEY e STUDIO_OWNER_USER_ID. Configure no ambiente de hospedagem, não no GitHub. As credenciais locais descritas acima são exclusivas do servidor legado.
+
+
+## Estrutura de produção
+
+O servidor Node legado e seus arquivos HTML/CSS/JS estão em `legacy-local/` para evitar que o Nitro detecte `server.mjs` ou `index.html` como entrada de produção. O comando `npm run studio` permanece válido para uso local. A versão principal usa `src/server.ts` e `src/routes/index.tsx`; a alternativa estática permanece em `public/studio/`.
