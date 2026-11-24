@@ -48,11 +48,19 @@ async function loadProject(ctx: Ctx, id: string) {
   return data;
 }
 
+async function jobsAdmin() { const {supabaseAdmin}=await import('@/integrations/supabase/client.server');return supabaseAdmin; }
+
 async function createJob(ctx: Ctx, row: Record<string, unknown>) {
-  const { data, error } = await ctx.supabase.from("studio_jobs").insert({ ...row, user_id: ctx.userId, status: "running" }).select("*").single();
+  const admin=await jobsAdmin();
+  const kind=row['kind']==='video'?'video':'stage';
+  const since=new Date(Date.now()-86400000).toISOString();
+  const quota=await admin.from('studio_jobs').select('id',{count:'exact',head:true}).eq('user_id',ctx.userId).eq('kind',kind).gte('created_at',since);
+  if(quota.error)throw Error('Não foi possível verificar o limite de geração.');
+  if((quota.count??0)>=(kind==='video'?5:20))throw Error('Limite de gerações das últimas 24 horas atingido.');
+  const { data, error } = await admin.from("studio_jobs").insert({ ...row, user_id: ctx.userId, status: "running" } as import("@/integrations/supabase/types").Database["public"]["Tables"]["studio_jobs"]["Insert"]).select("*").single();
   if (!error) return { job: data, existing: false };
   if (error.code === "23505") {
-    const { data: same } = await ctx.supabase.from("studio_jobs").select("*").eq("idempotency_key", row["idempotency_key"]).maybeSingle();
+    const { data: same } = await admin.from("studio_jobs").select("*").eq("user_id",ctx.userId).eq("idempotency_key",String(row["idempotency_key"])).maybeSingle();
     if (same) return { job: same, existing: true };
     throw new Error("Já existe uma geração deste tipo em andamento. Aguarde ou cancele antes de iniciar outra.");
   }
@@ -60,7 +68,9 @@ async function createJob(ctx: Ctx, row: Record<string, unknown>) {
 }
 
 async function updateJob(ctx: Ctx, id: string, patch: Record<string, unknown>) {
-  await ctx.supabase.from("studio_jobs").update(patch).eq("id", id);
+  const admin=await jobsAdmin();
+  const {error}=await admin.from("studio_jobs").update(patch).eq("id",id).eq("user_id",ctx.userId);
+  if(error)throw Error("Não foi possível atualizar a tarefa.");
 }
 
 async function storeResult(ctx: Ctx, job: any, bytes: Uint8Array, mime: string) {
@@ -68,7 +78,8 @@ async function storeResult(ctx: Ctx, job: any, bytes: Uint8Array, mime: string) 
   const path = `${ctx.userId}/${job.project_id}/${job.kind}-${job.id}.${ext}`;
   const { error } = await ctx.supabase.storage.from(BUCKET).upload(path, bytes, { contentType: mime, upsert: true });
   if (error) throw new Error("Falha ao salvar o resultado no armazenamento privado.");
-  await ctx.supabase.from("studio_projects").update(job.kind === "stage" ? { last_path: path } : { video_path: path }).eq("id", job.project_id);
+  const projectUpdate=await ctx.supabase.from("studio_projects").update(job.kind === "stage" ? { last_path: path, video_path:null } : { video_path: path }).eq("id", job.project_id).eq("user_id",ctx.userId).select("id").single();
+  if(projectUpdate.error)throw Error("Não foi possível salvar o resultado no projeto.");
   await updateJob(ctx, job.id, { status: "done", result_path: path, error: null });
   return path;
 }
@@ -140,7 +151,7 @@ export const startStage = createServerFn({ method: "POST" })
         const out = await geminiStage({ key, model: data.model, prompt, image: first.inline });
         const bytes = Uint8Array.from(atob(out.data), (c) => c.charCodeAt(0));
         const mime = sniffImageMime(bytes);
-        if (!mime) throw new ProviderError("O Gemini retornou um formato de imagem não suportado.");
+        if (!mime || !imageSize(bytes) || bytes.length>MAX_IMAGE_BYTES) throw new ProviderError("O Gemini retornou imagem inválida ou acima do limite.");
         const path = await storeResult(ctx, job, bytes, mime);
         return publicJob({ ...job, status: "done", result_path:path });
       }
@@ -206,7 +217,8 @@ export const pollJob = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as Ctx;
     await ownerOnly(ctx);
-    const { data: job } = await ctx.supabase.from("studio_jobs").select("*").eq("id", data.jobId).maybeSingle();
+    const admin=await jobsAdmin();
+    const { data: job } = await admin.from("studio_jobs").select("*").eq("id", data.jobId).eq("user_id",ctx.userId).maybeSingle();
     if (!job) throw new Error("Tarefa não encontrada.");
     if (job.status !== "running" && job.status !== "queued") return publicJob(job);
     if (new Date(job.deadline_at).getTime() < Date.now()) {
@@ -251,7 +263,5 @@ export const cancelJob = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const ctx = context as unknown as Ctx;
     await ownerOnly(ctx);
-    await ctx.supabase.from("studio_jobs").update({ status: "error", error: "Acompanhamento cancelado pelo usuário. A tarefa pode continuar (e ser cobrada) no provedor." })
-      .eq("id", data.jobId).in("status", ["queued", "running"]);
-    return { ok: true };
+    throw Error("Não é possível cancelar com segurança no provedor. Consulte a tarefa até concluir.");
   });
