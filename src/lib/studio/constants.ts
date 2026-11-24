@@ -46,8 +46,8 @@ export type ImageProvider = (typeof IMAGE_PROVIDERS)[number]["value"];
 export type VideoProvider = (typeof VIDEO_PROVIDERS)[number]["value"];
 
 export const GEMINI_IMAGE_MODELS = [
-  "gemini-2.5-flash-image",
-  "gemini-3-pro-image-preview",
+  "gemini-3.1-flash-lite-image",
+  "gemini-3-pro-image",
   "gemini-3.1-flash-image",
 ] as const;
 export const VEO_MODELS = ["veo-3.1-fast-generate-001", "veo-3.1-generate-001"] as const;
